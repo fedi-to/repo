@@ -82,8 +82,35 @@ static ENTRIES: &'static [Entry] = {
     ]
 };
 
-fn is_referer_invalid(referer: Option<&HeaderValue>) -> bool {
-    false // for now
+/// Checks the referer for `POST /register`
+fn is_referer_invalid(
+    referer: Option<&HeaderValue>,
+    host: Option<&HeaderValue>,
+) -> bool {
+    if referer.is_none() || host.is_none() {
+        return true;
+    }
+    let referer = referer.unwrap().as_bytes();
+    let host = host.unwrap().as_bytes();
+    referer != b"/register" && !referer.starts_with(b"/register?") && {
+        let referer = match referer {
+            [b'h', b't', b't', b'p', b's', b':', referer @ ..] => referer,
+            [b'h', b't', b't', b'p', b':', referer @ ..] => referer,
+            referer => referer,
+        };
+        if let [b'/', b'/', referer @ ..] = referer {
+            !(
+                referer.starts_with(host)
+                &&
+                // use starts_with for implicit length checking.
+                // NB: the above starts_with already checks host.len(), so
+                // this cannot panic.
+                referer[host.len()..].starts_with(b"/")
+            )
+        } else {
+            true
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -287,7 +314,10 @@ async fn register_post(
 ) -> Result<&'static str, (StatusCode, &'static str)> {
     // far easier to just take the whole request and deal with it here than to
     // write a custom extractor for this.
-    if is_referer_invalid(request.headers().get("referer")) {
+    if is_referer_invalid(
+        request.headers().get("referer"),
+        request.headers().get("host"),
+    ) {
         return Err((
             StatusCode::BAD_REQUEST,
             "Wrong domain",
