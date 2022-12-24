@@ -7,9 +7,6 @@ processes = []
 
 [env]
 
-[build]
-image = "fedito"
-
 [experimental]
   allowed_public_ports = []
   auto_rollback = true
