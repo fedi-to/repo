@@ -1,11 +1,11 @@
 
 #[cfg(feature="lenient_scheme")]
 macro_rules! lenient_scheme_toggle {
-    ($lenient:tt, $strict:tt $(,)?) => { $lenient }
+    ( { $($lenient:tt)* }, { $($strict:tt)* } $(,)?) => { $($lenient)* }
 }
 #[cfg(not(feature="lenient_scheme"))]
 macro_rules! lenient_scheme_toggle {
-    ($lenient:tt, $strict:tt $(,)?) => { $strict }
+    ( { $($lenient:tt)* }, { $($strict:tt)* } $(,)?) => { $($strict)* }
 }
 
 mod de;
