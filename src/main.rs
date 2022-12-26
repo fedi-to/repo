@@ -116,7 +116,7 @@ fn is_referer_invalid(
 #[derive(serde::Deserialize)]
 struct GoTo {
     target: String,
-    h: u32,
+    h: Option<u32>,
 }
 
 #[derive(serde::Deserialize)]
@@ -171,6 +171,12 @@ async fn go(
             Cow::Borrowed("The specified target is not an acceptable URL"),
         )
     };
+    const NO_HANDLER: (StatusCode, Cow<'static, str>) = {
+        (
+            StatusCode::BAD_REQUEST,
+            Cow::Borrowed("The specified URL requires an explicit handler"),
+        )
+    };
     const BAD_COOKIES: (StatusCode, Cow<'static, str>) = {
         (
             StatusCode::BAD_REQUEST,
@@ -201,7 +207,39 @@ async fn go(
         d.set_same_site(cookie::SameSite::Lax);
         cookies.add(d);
     }
-    let entry = ENTRIES.get(h.unwrap_or(params.h) as usize);
+    let Some(h) = h.and(params.h) else {
+        let mut as_if_https = params.target.clone();
+        // replace web+scheme with https
+        // this allows us to handle web+ URLs with the semantics we actually
+        // want, which is roughly the same as https, with a few differences
+        as_if_https.replace_range(0..4+scheme.len(), "https");
+        // the main difference is that unlike https, authority is optional.
+        // so, first check that there should be an authority.
+        if !as_if_https.starts_with("https://") {
+            return Err(NO_HANDLER);
+        }
+        // then also check that the authority actually exists.
+        // this is necessary so we don't end up parsing web+example:///bar as
+        // web+example://bar/ (which would be wrong).
+        // note that we do parse web+example://bar\ as an authority! (but
+        // everything else is opaque)
+        if as_if_https.starts_with("https:///")
+        || as_if_https.starts_with("https://\\") {
+            return Err(NO_HANDLER);
+        }
+        // NOTE: we only do this parse to extract the domain/port, it is up to
+        // the protocol-handler to deal with malformed or malicious input.
+        // NOTE: this is the same URL parser as used by browsers when handling
+        // `href` so this is correct.
+        let mut url = url::Url::parse(&*as_if_https).map_err(|_| NO_HANDLER)?;
+        url.set_path("/.well-known/protocol-handler");
+        let mut target = "target=".to_owned();
+        target.extend(utf8_percent_encode(&*params.target, COMPONENT));
+        url.set_query(Some(&*target));
+        url.set_fragment(None);
+        return Ok(Redirect::temporary(url.as_ref()));
+    };
+    let entry = ENTRIES.get(h as usize);
     entry.filter(|entry| {
         entry.active
     }).map(|entry| {
