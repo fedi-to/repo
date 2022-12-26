@@ -207,7 +207,7 @@ async fn go(
         d.set_same_site(cookie::SameSite::Lax);
         cookies.add(d);
     }
-    let Some(h) = h.and(params.h) else {
+    let Some(h) = h.or(params.h) else {
         let mut as_if_https = params.target.clone();
         // replace web+scheme with https
         // this allows us to handle web+ URLs with the semantics we actually
