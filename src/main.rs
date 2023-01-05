@@ -73,8 +73,16 @@ static ENTRIES: &'static [Entry] = {
         },
         Entry {
             name: Cow::Borrowed("GAnarchy on ganarchy.github.io"),
-            target_url: Cow::Borrowed("https://ganarchy.github.io/?url="),
+            target_url: Cow::Borrowed("https://ganarchy.github.io/.well-known/protocol-handler?target="),
             homepage: Cow::Borrowed("https://ganarchy.github.io/"),
+            icon: Cow::Borrowed("assets/no_icon.png"),
+            alt: Cow::Borrowed("No Icon"),
+            active: true,
+        },
+        Entry {
+            name: Cow::Borrowed("ActivityPub Helper"),
+            target_url: Cow::Borrowed("https://fedi-to.github.io/activitypub-helper/?target="),
+            homepage: Cow::Borrowed("https://github.com/fedi-to/activitypub-helper"),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
             active: true,
