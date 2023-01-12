@@ -33,3 +33,6 @@ features = ["fs", "set-header"]
 
 [profile.release]
 debug = 1
+
+[dev-dependencies]
+tokio = {features = ["test-util"]}

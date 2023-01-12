@@ -135,6 +135,10 @@ struct Register {
 
 #[tokio::main]
 async fn main() {
+    axum::Server::bind(&"[::]:3000".parse().unwrap()).serve(app().into_make_service()).await.unwrap();
+}
+
+fn app() -> Router {
     let index = ServeFile::new("dist/index.xhtml");
     let tos = ServeFile::new("dist/tos.xhtml");
     let privacy = ServeFile::new("dist/privacy.xhtml");
@@ -150,7 +154,7 @@ async fn main() {
         header::X_FRAME_OPTIONS,
         HeaderValue::from_static("DENY"),
     );
-    let app = Router::new()
+    Router::new()
         .route("/", any_service(index).handle_error(handle_io_error))
         .route("/tos", any_service(tos).handle_error(handle_io_error))
         .route("/privacy", any_service(privacy).handle_error(handle_io_error))
@@ -164,8 +168,7 @@ async fn main() {
         .fallback(handle_missing)
         .layer(CookieManagerLayer::new())
         .layer(default_referer_policy)
-        .layer(no_frames);
-    axum::Server::bind(&"[::]:3000".parse().unwrap()).serve(app.into_make_service()).await.unwrap();
+        .layer(no_frames)
 }
 
 #[axum::debug_handler]
@@ -439,9 +442,143 @@ async fn handle_missing(request: Request<Body>) -> impl IntoResponse {
     result
 }
 
-async fn handle_io_error(err: std::io::Error) -> (StatusCode, String) {
+async fn handle_io_error(_: std::io::Error) -> (StatusCode, String) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Something went wrong: {}", err),
+        format!("Something went wrong"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn main_page_is_ok() {
+        let app = app();
+        let res = app.oneshot(
+            Request::builder().uri("/").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        // FIXME: test that it parses as XHTML
+    }
+
+    #[tokio::test]
+    async fn system_redirect() {
+        let app = app();
+        let res = app.oneshot(
+            Request::builder()
+            .uri("/go?h=0&target=web%2Bap://chaos.social/@SoniEx2")
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers().get("location").unwrap(),
+            "web+ap://chaos.social/@SoniEx2",
+        );
+    }
+
+    #[tokio::test]
+    async fn well_known_redirect() {
+        let app = app();
+        let res = app.oneshot(
+            Request::builder()
+            .uri("/go?target=web%2Bap://chaos.social/@SoniEx2")
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers().get("location").unwrap(),
+            "https://chaos.social/.well-known/protocol-handler?target=web%2Bap%3A%2F%2Fchaos.social%2F%40SoniEx2",
+        );
+    }
+
+    #[tokio::test]
+    async fn well_known_use_system_redirect() {
+        let app = app();
+        let cookie = {
+            let mut string = build_cookie(
+                Some(("ap", 0)).into_iter().collect(),
+                0
+            );
+            string.insert_str(0, "d=");
+            string
+        };
+        let res = app.oneshot(
+            Request::builder()
+            .uri("/go?target=web%2Bap://chaos.social/@SoniEx2")
+            .header("cookie", cookie)
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers().get("location").unwrap(),
+            "web+ap://chaos.social/@SoniEx2",
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_use_system_redirect() {
+        let app = app();
+        let cookie = {
+            let mut string = build_cookie(
+                Some(("ap", 0)).into_iter().collect(),
+                0
+            );
+            string.insert_str(0, "d=");
+            string
+        };
+        let res = app.oneshot(
+            Request::builder()
+            .uri("/go?h=3&target=web%2Bap://chaos.social/@SoniEx2")
+            .header("cookie", cookie)
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers().get("location").unwrap(),
+            "web+ap://chaos.social/@SoniEx2",
+        );
+    }
+
+    #[tokio::test]
+    async fn ap_workaround_redirect() {
+        let app = app();
+        let res = app.oneshot(
+            Request::builder()
+            .uri("/go?h=3&target=web%2Bap://chaos.social/@SoniEx2")
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers().get("location").unwrap(),
+            "https://fedi-to.github.io/activitypub-helper/?target=web%2Bap%3A%2F%2Fchaos.social%2F%40SoniEx2",
+        );
+    }
+
+    #[tokio::test]
+    async fn no_post_without_referer() {
+        let app = app();
+        let res = app.oneshot(
+            Request::builder()
+            .uri("/register?h=0&protocol=web%2Bap").method("POST")
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn yes_post_with_referer() {
+        let app = app();
+        let res = app.oneshot(
+            Request::builder()
+            .method("POST")
+            .uri("/register?h=0&protocol=web%2Bap")
+            .header("Referer", "/register")
+            .header("Host", "example.org")
+            .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        // FIXME check cookies
+    }
 }
