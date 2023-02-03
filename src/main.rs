@@ -65,7 +65,7 @@ static ENTRIES: &'static [Entry] = {
         },
         Entry {
             name: Cow::Borrowed("GAnarchy on autistic.space"),
-            target_url: Cow::Borrowed("https://ganarchy.autistic.space/?url="),
+            target_url: Cow::Borrowed("https://ganarchy.autistic.space/.well-known/protocol-handler?target="),
             homepage: Cow::Borrowed("https://ganarchy.autistic.space/"),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
@@ -369,7 +369,7 @@ async fn register_post(
     ) {
         return Err((
             StatusCode::BAD_REQUEST,
-            "Wrong domain",
+            "XSS attempt or missing/broken referer",
         ));
     }
     const BAD_PROTO: (StatusCode, &'static str) = {
