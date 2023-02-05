@@ -244,6 +244,8 @@ async fn go(
         // `href` so this is correct.
         let mut url = url::Url::parse(&*as_if_https).map_err(|_| NO_HANDLER)?;
         url.set_path("/.well-known/protocol-handler");
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
         let mut target = "target=".to_owned();
         target.extend(utf8_percent_encode(&*params.target, COMPONENT));
         url.set_query(Some(&*target));
