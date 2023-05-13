@@ -45,8 +45,6 @@ const COMPONENT: &'static AsciiSet = &{
 #[derive(serde::Deserialize)]
 struct Entry {
     name: Cow<'static, str>,
-    // FIXME use well-known location instead
-    // /.well-known/protocol-handler?target=
     handler: Option<Handler>,
     homepage: Cow<'static, str>,
     icon: Cow<'static, str>,
@@ -266,12 +264,13 @@ async fn go(
             as_if_https.replace_range(0..4+scheme.len(), "https");
             Ok(Redirect::temporary(&*as_if_https))
         }
-        Some(Entry { handler: None, .. }) => {
-            match get_fallback(scheme, &*params.target) {
-                Ok(url) => Ok(Redirect::temporary(&*url)),
-                Err(fedito::FallbackError::NoHandler) => Err(NO_HANDLER),
-                Err(fedito::FallbackError::NotAnUrl) => Err(NOT_AN_URL),
-            }
+        Some(Entry { handler: None, homepage, .. }) => {
+            // FIXME? handle homepage correctly when it isn't https://example/
+            // e.g. https://example/index.html is currently handled wrong
+            let mut target = homepage.to_string();
+            target.push_str(".well-known/protocol-handler?target=");
+            target.extend(utf8_percent_encode(&*params.target, COMPONENT));
+            Ok(Redirect::temporary(&*target))
         }
         None => {
             Err((StatusCode::NOT_FOUND, Cow::Borrowed("Unknown handler")))
