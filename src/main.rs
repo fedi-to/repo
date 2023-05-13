@@ -87,6 +87,14 @@ static ENTRIES: &'static [Entry] = {
             alt: Cow::Borrowed("No Icon"),
             active: true,
         },
+        Entry {
+            name: Cow::Borrowed("Fedi-To Compatibility Layer (Elk backend)"),
+            target_url: Cow::Borrowed("https://fedi-to.github.io/compat-layer/elk?target="),
+            homepage: Cow::Borrowed("https://github.com/fedi-to/compat-layer"),
+            icon: Cow::Borrowed("assets/no_icon.png"),
+            alt: Cow::Borrowed("No Icon"),
+            active: true,
+        },
     ]
 };
 
