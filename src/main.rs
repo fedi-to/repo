@@ -26,6 +26,7 @@ use tower_http::{
 use fedito::CookieDeserializer;
 use fedito::build_cookie;
 use fedito::is_scheme_invalid;
+use fedito::get_fallback;
 
 const COMPONENT: &'static AsciiSet = &{
     // start with CONTROLS
@@ -46,18 +47,25 @@ struct Entry {
     name: Cow<'static, str>,
     // FIXME use well-known location instead
     // /.well-known/protocol-handler?target=
-    target_url: Cow<'static, str>,
+    handler: Option<Handler>,
     homepage: Cow<'static, str>,
     icon: Cow<'static, str>,
     alt: Cow<'static, str>,
     active: bool,
 }
 
+#[derive(serde::Deserialize)]
+enum Handler {
+    Url(Cow<'static, str>),
+    System,
+    ToHttps,
+}
+
 static ENTRIES: &'static [Entry] = {
     &[
         Entry {
             name: Cow::Borrowed("System handler"),
-            target_url: Cow::Borrowed(""),
+            handler: Some(Handler::System),
             homepage: Cow::Borrowed(""),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
@@ -65,7 +73,7 @@ static ENTRIES: &'static [Entry] = {
         },
         Entry {
             name: Cow::Borrowed("GAnarchy on autistic.space"),
-            target_url: Cow::Borrowed("https://ganarchy.autistic.space/.well-known/protocol-handler?target="),
+            handler: None,
             homepage: Cow::Borrowed("https://ganarchy.autistic.space/"),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
@@ -73,7 +81,7 @@ static ENTRIES: &'static [Entry] = {
         },
         Entry {
             name: Cow::Borrowed("GAnarchy on ganarchy.github.io"),
-            target_url: Cow::Borrowed("https://ganarchy.github.io/.well-known/protocol-handler?target="),
+            handler: None,
             homepage: Cow::Borrowed("https://ganarchy.github.io/"),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
@@ -81,7 +89,7 @@ static ENTRIES: &'static [Entry] = {
         },
         Entry {
             name: Cow::Borrowed("ActivityPub Helper"),
-            target_url: Cow::Borrowed("https://fedi-to.github.io/activitypub-helper/?target="),
+            handler: Some(Handler::Url(Cow::Borrowed("https://fedi-to.github.io/activitypub-helper/?target="))),
             homepage: Cow::Borrowed("https://github.com/fedi-to/activitypub-helper"),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
@@ -89,8 +97,16 @@ static ENTRIES: &'static [Entry] = {
         },
         Entry {
             name: Cow::Borrowed("Fedi-To Compatibility Layer (Elk backend)"),
-            target_url: Cow::Borrowed("https://fedi-to.github.io/compat-layer/elk?target="),
+            handler: Some(Handler::Url(Cow::Borrowed("https://fedi-to.github.io/compat-layer/elk?target="))),
             homepage: Cow::Borrowed("https://github.com/fedi-to/compat-layer"),
+            icon: Cow::Borrowed("assets/no_icon.png"),
+            alt: Cow::Borrowed("No Icon"),
+            active: true,
+        },
+        Entry {
+            name: Cow::Borrowed("Just Pretend It's HTTPS (What could go wrong?)"),
+            handler: Some(Handler::ToHttps),
+            homepage: Cow::Borrowed(""),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
             active: true,
@@ -227,53 +243,40 @@ async fn go(
         cookies.add(d);
     }
     let Some(h) = h.or(params.h) else {
-        let mut as_if_https = params.target.clone();
-        // replace web+scheme with https
-        // this allows us to handle web+ URLs with the semantics we actually
-        // want, which is roughly the same as https, with a few differences
-        as_if_https.replace_range(0..4+scheme.len(), "https");
-        // the main difference is that unlike https, authority is optional.
-        // so, first check that there should be an authority.
-        if !as_if_https.starts_with("https://") {
-            return Err(NO_HANDLER);
-        }
-        // then also check that the authority actually exists.
-        // this is necessary so we don't end up parsing web+example:///bar as
-        // web+example://bar/ (which would be wrong).
-        // note that we do parse web+example://bar\ as an authority! (but
-        // everything else is opaque)
-        if as_if_https.starts_with("https:///")
-        || as_if_https.starts_with("https://\\") {
-            return Err(NO_HANDLER);
-        }
-        // NOTE: we only do this parse to extract the domain/port, it is up to
-        // the protocol-handler to deal with malformed or malicious input.
-        // NOTE: this is the same URL parser as used by browsers when handling
-        // `href` so this is correct.
-        let mut url = url::Url::parse(&*as_if_https).map_err(|_| NO_HANDLER)?;
-        url.set_path("/.well-known/protocol-handler");
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
-        let mut target = "target=".to_owned();
-        target.extend(utf8_percent_encode(&*params.target, COMPONENT));
-        url.set_query(Some(&*target));
-        url.set_fragment(None);
-        return Ok(Redirect::temporary(url.as_ref()));
+        return match get_fallback(scheme, &*params.target) {
+            Ok(url) => Ok(Redirect::temporary(&*url)),
+            Err(fedito::FallbackError::NoHandler) => Err(NO_HANDLER),
+            Err(fedito::FallbackError::NotAnUrl) => Err(NOT_AN_URL),
+        };
     };
     let entry = ENTRIES.get(h as usize);
-    entry.filter(|entry| {
+    match entry.filter(|entry| {
         entry.active
-    }).map(|entry| {
-        if entry.target_url.is_empty() {
-            Redirect::temporary(&*params.target)
-        } else {
-            let mut target = entry.target_url.to_string();
+    }) {
+        Some(Entry { handler: Some(Handler::Url(u)), .. }) => {
+            let mut target = u.to_string();
             target.extend(utf8_percent_encode(&*params.target, COMPONENT));
-            Redirect::temporary(&*target)
+            Ok(Redirect::temporary(&*target))
+        },
+        Some(Entry { handler: Some(Handler::System), .. }) => {
+            Ok(Redirect::temporary(&*params.target))
+        },
+        Some(Entry { handler: Some(Handler::ToHttps), .. }) => {
+            let mut as_if_https = params.target.clone();
+            as_if_https.replace_range(0..4+scheme.len(), "https");
+            Ok(Redirect::temporary(&*as_if_https))
         }
-    }).ok_or_else(|| {
-        (StatusCode::NOT_FOUND, Cow::Borrowed("Unknown handler"))
-    })
+        Some(Entry { handler: None, .. }) => {
+            match get_fallback(scheme, &*params.target) {
+                Ok(url) => Ok(Redirect::temporary(&*url)),
+                Err(fedito::FallbackError::NoHandler) => Err(NO_HANDLER),
+                Err(fedito::FallbackError::NotAnUrl) => Err(NOT_AN_URL),
+            }
+        }
+        None => {
+            Err((StatusCode::NOT_FOUND, Cow::Borrowed("Unknown handler")))
+        }
+    }
 }
 
 #[axum::debug_handler]
@@ -388,6 +391,12 @@ async fn register_post(
             "The specified protocol is not acceptable",
         )
     };
+    const BAD_HANDLER: (StatusCode, &'static str) = {
+        (
+            StatusCode::BAD_REQUEST,
+            "The specified handler is not acceptable",
+        )
+    };
     let scheme = {
         let scheme = &params.protocol[..];
         if !scheme.starts_with("web+") {
@@ -404,7 +413,10 @@ async fn register_post(
         entry.active
     }).map_or(
         Err((StatusCode::NOT_FOUND, "Unknown handler")),
-        |_| {
+        |entry| {
+            if let Some(Handler::ToHttps) = entry.handler {
+                return Err(BAD_HANDLER);
+            }
             let new_cookie = cookies.get("d").map(|d| {
                 let d = d.value();
                 let cd = CookieDeserializer::new(d);
