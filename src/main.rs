@@ -392,10 +392,10 @@ async fn register_post(
             "The specified protocol is not acceptable",
         )
     };
-    const BAD_HANDLER: (StatusCode, &'static str) = {
+    const BAD_HANDLER_EGG: (StatusCode, &'static str) = {
         (
             StatusCode::BAD_REQUEST,
-            "The specified handler is not acceptable",
+            "The specified handler is not acceptable (congrats on finding the easter egg tho!)",
         )
     };
     let scheme = {
@@ -416,7 +416,7 @@ async fn register_post(
         Err((StatusCode::NOT_FOUND, "Unknown handler")),
         |entry| {
             if let Some(Handler::ToHttps) = entry.handler {
-                return Err(BAD_HANDLER);
+                return Err(BAD_HANDLER_EGG);
             }
             let new_cookie = cookies.get("d").map(|d| {
                 let d = d.value();
