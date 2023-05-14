@@ -187,6 +187,8 @@ fn app() -> Router {
         )).post(register_post))
         // for images/scripts/styles/etc
         .nest_service("/assets", any_service(ServeDir::new("assets")).handle_error(handle_io_error))
+        // trophies/achievements
+        .nest_service("/trophies", any_service(ServeDir::new("trophies")).handle_error(handle_io_error))
         .fallback(handle_missing)
         .layer(CookieManagerLayer::new())
         .layer(default_referer_policy)
