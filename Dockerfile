@@ -26,4 +26,5 @@ RUN set -eux; \
 COPY --from=builder /app/fedito ./fedito
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/assets ./assets
+COPY --from=builder /app/trophies ./trophies
 CMD ["./fedito"]
