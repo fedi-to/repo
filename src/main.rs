@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use axum::{
     Router,
     body::Body,
+    Json,
     http::{
         header::{self, HeaderValue},
         Request,
         StatusCode,
     },
-    response::{Html, IntoResponse, Redirect},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{any_service, get, get_service},
 };
 use axum_extra::extract::Query;
@@ -61,7 +62,7 @@ enum Handler {
 
 static ENTRIES: &'static [Entry] = {
     &[
-        Entry {
+        Entry { // 0
             name: Cow::Borrowed("System handler"),
             handler: Some(Handler::System),
             homepage: Cow::Borrowed(""),
@@ -69,7 +70,7 @@ static ENTRIES: &'static [Entry] = {
             alt: Cow::Borrowed("No Icon"),
             active: true,
         },
-        Entry {
+        Entry { // 1
             name: Cow::Borrowed("GAnarchy on autistic.space"),
             handler: None,
             homepage: Cow::Borrowed("https://ganarchy.autistic.space/"),
@@ -77,7 +78,7 @@ static ENTRIES: &'static [Entry] = {
             alt: Cow::Borrowed("No Icon"),
             active: true,
         },
-        Entry {
+        Entry { // 2
             name: Cow::Borrowed("GAnarchy on ganarchy.github.io"),
             handler: None,
             homepage: Cow::Borrowed("https://ganarchy.github.io/"),
@@ -85,7 +86,7 @@ static ENTRIES: &'static [Entry] = {
             alt: Cow::Borrowed("No Icon"),
             active: true,
         },
-        Entry {
+        Entry { // 3
             name: Cow::Borrowed("ActivityPub Helper"),
             handler: Some(Handler::Url(Cow::Borrowed("https://fedi-to.github.io/activitypub-helper/?target="))),
             homepage: Cow::Borrowed("https://github.com/fedi-to/activitypub-helper"),
@@ -93,7 +94,7 @@ static ENTRIES: &'static [Entry] = {
             alt: Cow::Borrowed("No Icon"),
             active: true,
         },
-        Entry {
+        Entry { // 4
             name: Cow::Borrowed("Fedi-To Compatibility Layer (Elk backend)"),
             handler: Some(Handler::Url(Cow::Borrowed("https://fedi-to.github.io/compat-layer/elk?target="))),
             homepage: Cow::Borrowed("https://github.com/fedi-to/compat-layer"),
@@ -101,10 +102,18 @@ static ENTRIES: &'static [Entry] = {
             alt: Cow::Borrowed("No Icon"),
             active: true,
         },
-        Entry {
+        Entry { // 5
             name: Cow::Borrowed("Just Pretend It's HTTPS (What could go wrong?)"),
             handler: Some(Handler::ToHttps),
             homepage: Cow::Borrowed(""),
+            icon: Cow::Borrowed("assets/no_icon.png"),
+            alt: Cow::Borrowed("No Icon"),
+            active: true,
+        },
+        Entry { // 6
+            name: Cow::Borrowed("Fedi-To Compatibility Layer (aus.social Elk backend)"),
+            handler: Some(Handler::Url(Cow::Borrowed("https://fedi-to.github.io/compat-layer/auss-elk?target="))),
+            homepage: Cow::Borrowed("https://github.com/fedi-to/compat-layer"),
             icon: Cow::Borrowed("assets/no_icon.png"),
             alt: Cow::Borrowed("No Icon"),
             active: true,
@@ -150,9 +159,21 @@ struct GoTo {
 }
 
 #[derive(serde::Deserialize)]
+struct CompatMastodon {
+    uri: String,
+}
+
+#[derive(serde::Deserialize)]
 struct Register {
     protocol: String,
     h: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct WebFinger {
+    resource: String,
+    #[serde(default)]
+    rel: Vec<String>,
 }
 
 #[tokio::main]
@@ -176,11 +197,20 @@ fn app() -> Router {
         header::X_FRAME_OPTIONS,
         HeaderValue::from_static("DENY"),
     );
+    let webfinger_cors = SetResponseHeaderLayer::if_not_present(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
     Router::new()
         .route("/", any_service(index).handle_error(handle_io_error))
         .route("/tos", any_service(tos).handle_error(handle_io_error))
         .route("/privacy", any_service(privacy).handle_error(handle_io_error))
         .route("/go", get(go))
+        .route("/compat/mastodon", get(compat_mastodon))
+        .route("/.well-known/webfinger", get(axum::handler::Handler::layer(
+            webfinger,
+            webfinger_cors,
+        )))
         .route("/register", get(axum::handler::Handler::layer(
             register_get,
             same_origin_referer_policy,
@@ -193,6 +223,67 @@ fn app() -> Router {
         .layer(CookieManagerLayer::new())
         .layer(default_referer_policy)
         .layer(no_frames)
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum WebFingerLink {
+    Template { rel: &'static str, template: String },
+}
+
+#[derive(serde::Serialize)]
+struct WebFingerResponse {
+    subject: String,
+    links: Vec<WebFingerLink>,
+}
+
+#[axum::debug_handler]
+async fn webfinger(
+    params: Query<WebFinger>,
+    request: Request<Body>,
+) -> Result<Response, (StatusCode, Cow<'static, str>)> {
+    let _ = params.rel;
+    let host = request.headers().get("host");
+    let host = host.map(|x| x.as_bytes()).unwrap_or(b"fedi-to.net");
+    let mut host = String::from_utf8(host.into()).unwrap_or("fedi-to.net".into());
+    host.insert_str(0, "https://");
+    if params.resource != host {
+        // FIXME make fuzzy
+        return Err((StatusCode::NOT_FOUND, "Not found".into()));
+    }
+    let template = host.clone() + "/compat/mastodon?uri={uri}";
+    let mut response = Json(WebFingerResponse {
+        subject: host,
+        links: vec![
+            WebFingerLink::Template {
+                rel: "http://ostatus.org/schema/1.0/subscribe",
+                template: template,
+            },
+        ],
+    }).into_response();
+    let headers_mut = response.headers_mut();
+    if headers_mut["Content-Type"] == "application/json" {
+        headers_mut.insert(
+            "Content-Type",
+            HeaderValue::from_static("application/jrd+json"),
+        );
+    }
+    Ok(response)
+}
+
+#[axum::debug_handler]
+async fn compat_mastodon(
+    params: Query<CompatMastodon>,
+) -> Result<Redirect, (StatusCode, Cow<'static, str>)> {
+    if params.uri.starts_with("https://") {
+        let mut new_uri = params.uri.clone();
+        new_uri.replace_range(..5, "web+ap");
+        let mut new_uri = utf8_percent_encode(&*new_uri, COMPONENT).to_string();
+        new_uri.insert_str(0, "/go?h=0&target=");
+        Ok(Redirect::permanent(&*new_uri))
+    } else {
+        Err((StatusCode::BAD_REQUEST, "Bad post or account URI".into()))
+    }
 }
 
 #[axum::debug_handler]
@@ -327,9 +418,8 @@ async fn register_get(
             </h1>
             {warning}
             <p>Registering a Protocol Handler</p>
-            <p>Would you like to register the following web
-            application for handling the
-            <strong>{proto}</strong> protocol?</p>
+            <p>Would you like to activate the following web
+            application for handling the <strong>{proto}</strong> protocol?</p>
             <img src="{icon}" alt="{alt}" />
             <h2>{title}</h2>
             <h3>Homepage: {homepage}</h3>
@@ -347,6 +437,7 @@ async fn register_get(
             use cookies so you can store this preference, as outlined in
             our <a href="/privacy">Privacy Policy</a>.</p>
             <form method="post"><button type="submit">Confirm</button></form>
+            <form method="get" action="/"><button type="submit">Cancel</button></form>
         </main>
         <footer>
             <hr />
