@@ -1,3 +1,5 @@
+// Copyright (C) 2022-2023 Soni L.
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 // There is no serializer.
 
